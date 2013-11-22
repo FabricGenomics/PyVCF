@@ -198,7 +198,7 @@ class Reader(object):
             self._reader = fsock
             if filename is None and hasattr(fsock, 'name'):
                 filename = fsock.name
-                compressed = compressed or filename.endswith('.gz')
+                #compressed = compressed or filename.endswith('.gz')
         elif filename:
             compressed = compressed or filename.endswith('.gz')
             self._reader = open(filename, 'rb' if compressed else 'rt')
