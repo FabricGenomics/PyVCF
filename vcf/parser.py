@@ -335,7 +335,7 @@ class Reader(object):
                 val = self._map(float, vals)
             elif entry_type == 'Flag':
                 val = True
-            elif entry_type == 'String':
+            elif entry_type == 'String' or entry_type == 'Character':
                 try:
                     vals = entry[1].split(',') # commas are reserved characters indicating multiple values
                     val = self._map(str, vals)
