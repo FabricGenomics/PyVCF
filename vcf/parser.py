@@ -198,7 +198,7 @@ class Reader(object):
             self._reader = fsock
             if filename is None and hasattr(fsock, 'name'):
                 filename = fsock.name
-                compressed = compressed or filename.endswith('.gz')
+                #compressed = compressed or filename.endswith('.gz')
         elif filename:
             compressed = compressed or filename.endswith('.gz')
             self._reader = open(filename, 'rb' if compressed else 'rt')
@@ -213,7 +213,8 @@ class Reader(object):
         else:
             self._separator = '\t| +'
 
-        self.reader = (line.strip() for line in self._reader if line.strip())
+        self.raw_reader = (line.strip() for line in self._reader if line\
+            .strip())
 
         self.pass_through = pass_through
 
@@ -233,8 +234,21 @@ class Reader(object):
         self._column_headers = []
         self._tabix = None
         self._prepend_chr = prepend_chr
+        self._previous_line = None
         self._parse_metainfo()
         self._format_cache = {}
+
+    @property
+    def reader(self):
+        """
+         if a previous line value exists return it else read a new line
+        """
+        if self._previous_line:
+            line = self._previous_line
+            self._previous_line = None
+            yield line
+        else:
+            yield self.raw_reader.next()
 
     def __iter__(self):
         return self
@@ -280,10 +294,21 @@ class Reader(object):
 
             line = self.reader.next()
 
+        # process the header line if it is a header
         fields = re.split(self._separator, line[1:])
-        self._column_headers = fields[:9]
-        self.samples = fields[9:]
-        self._sample_indexes = dict([(x,i) for (i,x) in enumerate(self.samples)])
+        if line.startswith('#'):
+            self._column_headers = fields[:9]
+            self.samples = fields[9:]
+        else:
+            # no header found, default to standard header
+            self._previous_line = line
+            self._column_headers = ['CHROM', 'POS', 'ID', 'REF', 'ALT',
+                                    'QUAL', 'FILTER', 'INFO', 'FORMAT']
+            self.samples = ['SAMPLE{0}'.format(i)
+                            for i in range(1, len(fields[9:])+1)]
+
+        self._sample_indexes = dict([(x,i) \
+                for (i,x) in enumerate(self.samples)])
 
     def _map(self, func, iterable, bad='.'):
         '''``map``, but make bad values None.'''
