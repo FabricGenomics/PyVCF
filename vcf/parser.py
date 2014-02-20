@@ -426,7 +426,7 @@ class Reader(object):
             for i, vals in enumerate(sample.split(':')):
 
                 # short circuit the most common
-                if vals == '.' or vals == './.':
+                if vals == '.' or vals == './.' or vals == '.|.':
                     sampdat[i] = None
                     continue
 
