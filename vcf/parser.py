@@ -213,8 +213,8 @@ class Reader(object):
         else:
             self._separator = '\t| +'
 
-        self.raw_reader = (line.strip() for line in self._reader if line\
-            .strip())
+        self.raw_reader = (line.strip() for line in self._reader
+                           if line.strip())
 
         self.pass_through = pass_through
 
@@ -500,6 +500,8 @@ class Reader(object):
     def next(self):
         '''Return the next record in the file.'''
         line = self.reader.next()
+        while line.startswith('#'):
+            line = self.reader.next()
         row = re.split(self._separator, line)
         chrom = row[0]
         if self._prepend_chr:
