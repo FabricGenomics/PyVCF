@@ -166,7 +166,16 @@ class _vcf_metadata_parser(object):
             return self.read_meta_hash(meta_string)
         else:
             match = self.meta_pattern.match(meta_string)
-            return match.group('key'), match.group('val')
+            try:
+                key = match.group('key')
+                val = match.group('val')
+            except:
+                print "WARNING: invalid header line ({}) skipped".\
+                    format(meta_string)
+                key=None
+                val=None
+
+            return key, val
 
 
 class Reader(object):
