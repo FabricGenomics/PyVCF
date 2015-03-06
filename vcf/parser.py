@@ -226,7 +226,15 @@ class _vcf_metadata_parser(object):
             # interpret anything else as key=none (and all values are parsed
             # as strings).
             return meta_string.lstrip('#'), 'none'
-        return match.group('key'), match.group('val')
+            try:
+                key = match.group('key')
+                val = match.group('val')
+            except:
+                print "WARNING: invalid header line ({}) skipped". \
+                    format(meta_string)
+                key = None
+                val = None
+            return key, val
 
 
 class Reader(object):
@@ -567,6 +575,8 @@ class Reader(object):
     def next(self):
         '''Return the next record in the file.'''
         line = self.reader.next()
+        while line.startswith('#'):
+            line = self.reader.next()
         row = re.split(self._separator, line.rstrip())
         chrom = row[0]
         if self._prepend_chr:
