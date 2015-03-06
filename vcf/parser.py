@@ -1,10 +1,11 @@
+import codecs
 import collections
-import re
 import csv
 import gzip
-import sys
 import itertools
-import codecs
+import os
+import re
+import sys
 
 try:
     from collections import OrderedDict
@@ -29,25 +30,30 @@ from model import _Substitution, _Breakend, _SingleBreakend, _SV
 RESERVED_INFO = {
     'AA': 'String', 'AC': 'Integer', 'AF': 'Float', 'AN': 'Integer',
     'BQ': 'Float', 'CIGAR': 'String', 'DB': 'Flag', 'DP': 'Integer',
-    'END': 'Integer', 'H2': 'Flag', 'MQ': 'Float', 'MQ0': 'Integer',
-    'NS': 'Integer', 'SB': 'String', 'SOMATIC': 'Flag', 'VALIDATED': 'Flag',
+    'END': 'Integer', 'H2': 'Flag', 'H3': 'Flag', 'MQ': 'Float',
+    'MQ0': 'Integer', 'NS': 'Integer', 'SB': 'String', 'SOMATIC': 'Flag',
+    'VALIDATED': 'Flag', '1000G': 'Flag',
 
-    # VCF 4.1 Additions
-    'IMPRECISE':'Flag', 'NOVEL':'Flag', 'END':'Integer', 'SVTYPE':'String',
-    'CIPOS':'Integer','CIEND':'Integer','HOMLEN':'Integer','HOMSEQ':'Integer',
-    'BKPTID':'String','MEINFO':'String','METRANS':'String','DGVID':'String',
-    'DBVARID':'String','MATEID':'String','PARID':'String','EVENT':'String',
-    'CILEN':'Integer','CN':'Integer','CNADJ':'Integer','CICN':'Integer',
-    'CICNADJ':'Integer'
+    # Keys used for structural variants
+    'IMPRECISE': 'Flag', 'NOVEL': 'Flag', 'SVTYPE': 'String',
+    'SVLEN': 'Integer', 'CIPOS': 'Integer', 'CIEND': 'Integer',
+    'HOMLEN': 'Integer', 'HOMSEQ': 'String', 'BKPTID': 'String',
+    'MEINFO': 'String', 'METRANS': 'String', 'DGVID': 'String',
+    'DBVARID': 'String', 'DBRIPID': 'String', 'MATEID': 'String',
+    'PARID': 'String', 'EVENT': 'String', 'CILEN': 'Integer',
+    'DPADJ': 'Integer', 'CN': 'Integer', 'CNADJ': 'Integer',
+    'CICN': 'Integer', 'CICNADJ': 'Integer'
 }
 
 RESERVED_FORMAT = {
     'GT': 'String', 'DP': 'Integer', 'FT': 'String', 'GL': 'Float',
-    'GQ': 'Float', 'HQ': 'Float',
+    'GLE': 'String', 'PL': 'Integer', 'GP': 'Float', 'GQ': 'Integer',
+    'HQ': 'Integer', 'PS': 'Integer', 'PQ': 'Integer', 'EC': 'Integer',
+    'MQ': 'Integer',
 
-    # VCF 4.1 Additions
-    'CN':'Integer','CNQ':'Float','CNL':'Float','NQ':'Integer','HAP':'Integer',
-    'AHAP':'Integer'
+    # Keys used for structural variants
+    'CN': 'Integer', 'CNQ': 'Float', 'CNL': 'Float', 'NQ': 'Integer',
+    'HAP': 'Integer', 'AHAP': 'Integer'
 }
 
 # Spec is a bit weak on which metadata lines are singular, like fileformat
@@ -57,12 +63,13 @@ SINGULAR_METADATA = ['fileformat', 'fileDate', 'reference']
 # Conversion between value in file and Python value
 field_counts = {
     '.': None,  # Unknown number of values
-    'A': -1,  # Equal to the number of alleles in a given record
+    'A': -1,  # Equal to the number of alternate alleles in a given record
     'G': -2,  # Equal to the number of genotypes in a given record
+    'R': -3,  # Equal to the number of alleles including reference in a given record
 }
 
 
-_Info = collections.namedtuple('Info', ['id', 'num', 'type', 'desc'])
+_Info = collections.namedtuple('Info', ['id', 'num', 'type', 'desc', 'source', 'version'])
 _Filter = collections.namedtuple('Filter', ['id', 'desc'])
 _Alt = collections.namedtuple('Alt', ['id', 'desc'])
 _Format = collections.namedtuple('Format', ['id', 'num', 'type', 'desc'])
@@ -75,9 +82,11 @@ class _vcf_metadata_parser(object):
         super(_vcf_metadata_parser, self).__init__()
         self.info_pattern = re.compile(r'''\#\#INFO=<
             ID=(?P<id>[^,]+),
-            Number=(?P<number>-?\d+|\.|[AG]),
+            Number=(?P<number>-?\d+|\.|[AGR]),
             Type=(?P<type>Integer|Float|Flag|Character|String),
             Description="(?P<desc>[^"]*)"
+            (?:,Source="(?P<source>[^"]*)")?
+            (?:,Version="?(?P<version>[^"]*)"?)?
             >''', re.VERBOSE)
         self.filter_pattern = re.compile(r'''\#\#FILTER=<
             ID=(?P<id>[^,]+),
@@ -89,15 +98,22 @@ class _vcf_metadata_parser(object):
             >''', re.VERBOSE)
         self.format_pattern = re.compile(r'''\#\#FORMAT=<
             ID=(?P<id>.+),
-            Number=(?P<number>-?\d+|\.|[AG]),
+            Number=(?P<number>-?\d+|\.|[AGR]),
             Type=(?P<type>.+),
             Description="(?P<desc>.*)"
+            >''', re.VERBOSE)
+        self.contig_pattern = re.compile(r'''\#\#contig=<
+            ID=(?P<id>[^>,]+)
+            (,.*length=(?P<length>-?\d+))?
+            .*
             >''', re.VERBOSE)
         self.meta_pattern = re.compile(r'''##(?P<key>.+?)=(?P<val>.+)''')
 
     def vcf_field_count(self, num_str):
         """Cast vcf header numbers to integer or None"""
-        if num_str not in field_counts:
+        if num_str is None:
+            return None
+        elif num_str not in field_counts:
             # Fixed, specified number
             return int(num_str)
         else:
@@ -113,7 +129,8 @@ class _vcf_metadata_parser(object):
         num = self.vcf_field_count(match.group('number'))
 
         info = _Info(match.group('id'), num,
-                     match.group('type'), match.group('desc'))
+                     match.group('type'), match.group('desc'),
+                     match.group('source'), match.group('version'))
 
         return (match.group('id'), info)
 
@@ -153,32 +170,63 @@ class _vcf_metadata_parser(object):
 
         return (match.group('id'), form)
 
+    def read_contig(self, contig_string):
+        '''Read a meta-contigrmation INFO line.'''
+        match = self.contig_pattern.match(contig_string)
+        if not match:
+            raise SyntaxError(
+                "One of the contig lines is malformed: %s" % contig_string)
+        length = self.vcf_field_count(match.group('length'))
+        contig = _Contig(match.group('id'), length)
+        return (match.group('id'), contig)
+
     def read_meta_hash(self, meta_string):
         items = re.split("[<>]", meta_string)
         # Removing initial hash marks and final equal sign
         key = items[0][2:-1]
-        hashItems = items[1].split(',')
-        key_value_pairs = [item.split("=") for item in hashItems]
+        # N.B., items can have quoted values, so cannot just split on comma
         val = OrderedDict()
-        for kv in key_value_pairs:
-            val[kv[0]] = u'='.join(kv[1:])
+        state = 0
+        k = ''
+        v = ''
+        for c in items[1]:
+
+            if state == 0:  # reading item key
+                if c == '=':
+                    state = 1  # end of key, start reading value
+                else:
+                    k += c  # extend key
+            elif state == 1:  # reading item value
+                if v == '' and c == '"':
+                    v += c  # include quote mark in value
+                    state = 2  # start reading quoted value
+                elif c == ',':
+                    val[k] = v  # store parsed item
+                    state = 0  # read next key
+                    k = ''
+                    v = ''
+                else:
+                    v += c
+            elif state == 2:  # reading quoted item value
+                if c == '"':
+                    v += c  # include quote mark in value
+                    state = 1  # end quoting
+                else:
+                    v += c
+        if k != '':
+            val[k] = v
         return key, val
 
     def read_meta(self, meta_string):
         if re.match("##.+=<", meta_string):
             return self.read_meta_hash(meta_string)
-        else:
-            match = self.meta_pattern.match(meta_string)
-            try:
-                key = match.group('key')
-                val = match.group('val')
-            except:
-                print "WARNING: invalid header line ({}) skipped".\
-                    format(meta_string)
-                key=None
-                val=None
-
-            return key, val
+        match = self.meta_pattern.match(meta_string)
+        if not match:
+            # Spec only allows key=value, but we try to be liberal and
+            # interpret anything else as key=none (and all values are parsed
+            # as strings).
+            return meta_string.lstrip('#'), 'none'
+        return match.group('key'), match.group('val')
 
 
 class Reader(object):
@@ -295,6 +343,10 @@ class Reader(object):
                 key, val = parser.read_format(line)
                 self.formats[key] = val
 
+            elif line.startswith('##contig'):
+                key, val = parser.read_contig(line)
+                self.contigs[key] = val
+
             else:
                 key, val = parser.read_meta(line)
                 if key in SINGULAR_METADATA:
@@ -336,10 +388,10 @@ class Reader(object):
             return {}
 
         entries = info_str.split(';')
-        retdict = OrderedDict()
+        retdict = {}
 
         for entry in entries:
-            entry = entry.split('=')
+            entry = entry.split('=', 1)
             ID = entry[0]
             try:
                 entry_type = self.infos[ID].type
@@ -372,11 +424,12 @@ class Reader(object):
                 val = self._map(float, vals)
             elif entry_type == 'Flag':
                 val = True
-            elif entry_type == 'String' or entry_type == 'Character':
+            elif entry_type in ('String', 'Character'):
                 try:
                     vals = entry[1].split(',') # commas are reserved characters indicating multiple values
                     val = self._map(str, vals)
                 except IndexError:
+                    entry_type = 'Flag'
                     val = True
 
             try:
@@ -418,7 +471,6 @@ class Reader(object):
         # check whether we already know how to parse this format
         if samp_fmt not in self._format_cache:
             self._format_cache[samp_fmt] = self._parse_sample_format(samp_fmt)
-
         samp_fmt = self._format_cache[samp_fmt]
 
         if cparse:
@@ -438,7 +490,10 @@ class Reader(object):
             for i, vals in enumerate(sample.split(':')):
 
                 # short circuit the most common
-                if vals in ['', '.' , './.', '.|.']:
+                if samp_fmt._fields[i] == 'GT':
+                    sampdat[i] = vals
+                    continue
+                elif vals == ".":
                     sampdat[i] = None
                     continue
 
@@ -512,9 +567,7 @@ class Reader(object):
     def next(self):
         '''Return the next record in the file.'''
         line = self.reader.next()
-        while line.startswith('#'):
-            line = self.reader.next()
-        row = re.split(self._separator, line)
+        row = re.split(self._separator, line.rstrip())
         chrom = row[0]
         if self._prepend_chr:
             chrom = 'chr' + chrom
@@ -537,7 +590,9 @@ class Reader(object):
                 qual = None
 
         filt = row[6]
-        if filt == 'PASS' or filt == '.':
+        if filt == '.':
+            filt = None
+        elif filt == 'PASS':
             filt = []
         else:
             filt = filt.split(';')
@@ -547,6 +602,9 @@ class Reader(object):
             fmt = row[8]
         except IndexError:
             fmt = None
+        else:
+            if fmt == '.':
+                fmt = None
 
         record = _Record(chrom, pos, ID, ref, alt, qual, filt,
                 info, fmt, self._sample_indexes)
@@ -557,14 +615,36 @@ class Reader(object):
 
         return record
 
-    def fetch(self, chrom, start, end=None):
-        """ fetch records from a Tabix indexed VCF, requires pysam
-            if start and end are specified, return iterator over positions
-            if end not specified, return individual ``_Call`` at start or None
+    def fetch(self, chrom, start=None, end=None):
+        """ Fetches records from a tabix-indexed VCF file and returns an
+            iterable of ``_Record`` instances
+
+            chrom must be specified.
+
+            The start and end coordinates are in the zero-based,
+            half-open coordinate system, similar to ``_Record.start`` and
+            ``_Record.end``. The very first base of a chromosome is
+            index 0, and the the region includes bases up to, but not
+            including the base at the end coordinate. For example
+            ``fetch('4', 10, 20)`` would include all variants
+            overlapping a 10 base pair region from the 11th base of
+            through the 20th base (which is at index 19) of chromosome
+            4. It would not include the 21st base (at index 20). See
+            http://genomewiki.ucsc.edu/index.php/Coordinate_Transforms
+            for more information on the zero-based, half-open coordinate
+            system.
+
+            If end is omitted, all variants from start until the end of
+            the chromosome chrom will be included.
+
+            If start and end are omitted, all variants on chrom will be
+            returned.
+
+            requires pysam
+
         """
         if not pysam:
             raise Exception('pysam not available, try "pip install pysam"?')
-
         if not self.filename:
             raise Exception('Please provide a filename (or a "normal" fsock)')
 
@@ -574,30 +654,28 @@ class Reader(object):
         if self._prepend_chr and chrom[:3] == 'chr':
             chrom = chrom[3:]
 
-        # not sure why tabix needs position -1
-        start = start - 1
-
-        if end is None:
-            self.reader = self._tabix.fetch(chrom, start, start + 1)
-            try:
-                return self.next()
-            except StopIteration:
-                return None
-
         self.reader = self._tabix.fetch(chrom, start, end)
         return self
 
 
 class Writer(object):
-    """ VCF Writer """
+    """VCF Writer. On Windows Python 2, open stream with 'wb'."""
 
     # Reverse keys and values in header field count dictionary
     counts = dict((v,k) for k,v in field_counts.iteritems())
 
-    def __init__(self, stream, template, lineterminator="\r\n"):
-        self.writer = csv.writer(stream, delimiter="\t", lineterminator=lineterminator)
+    def __init__(self, stream, template, lineterminator="\n"):
+        self.writer = csv.writer(stream, delimiter="\t",
+                                 lineterminator=lineterminator,
+                                 quotechar='', quoting=csv.QUOTE_NONE)
         self.template = template
         self.stream = stream
+
+        # Order keys for INFO fields defined in the header (undefined fields
+        # get a maximum key).
+        self.info_order = collections.defaultdict(
+            lambda: len(template.infos),
+            dict(zip(template.infos.iterkeys(), itertools.count())))
 
         two = '##{key}=<ID={0},Description="{1}">\n'
         four = '##{key}=<ID={0},Number={num},Type={2},Description="{3}">\n'
@@ -620,6 +698,11 @@ class Writer(object):
             stream.write(two.format(key="FILTER", *line))
         for line in template.alts.itervalues():
             stream.write(two.format(key="ALT", *line))
+        for line in template.contigs.itervalues():
+            if line.length:
+                stream.write('##contig=<ID={0},length={1}>\n'.format(*line))
+            else:
+                stream.write('##contig=<ID={0}>\n'.format(*line))
 
         self._write_header()
 
@@ -672,31 +755,21 @@ class Writer(object):
     def _format_info(self, info):
         if not info:
             return '.'
-        return ';'.join([self._stringify_pair(x,y) for x, y in info.iteritems()])
+        def order_key(field):
+            # Order by header definition first, alphabetically second.
+            return self.info_order[field], field
+        return ';'.join(self._stringify_pair(f, info[f]) for f in
+                        sorted(info, key=order_key))
 
     def _format_sample(self, fmt, sample):
-        try:
-            # Try to get the GT value first.
-            gt = getattr(sample.data, 'GT')
-            # PyVCF stores './.' GT values as None, so we need to revert it back
-            # to './.' when writing.
-            if gt is None:
-                gt = './.'
-        except AttributeError:
-            # Failing that, try to check whether 'GT' is specified in the FORMAT
-            # field. If yes, use the recommended empty value ('./.')
-            if 'GT' in fmt:
-                gt = './.'
-            # Otherwise use an empty string as the value
-            else:
-                gt = ''
-        # If gt is an empty string (i.e. not stored), write all other data
+        if hasattr(sample.data, 'GT'):
+            gt = sample.data.GT
+        else:
+            gt = './.' if 'GT' in fmt else ''
+
         if not gt:
             return ':'.join([self._stringify(x) for x in sample.data])
-        # Otherwise use the GT values from above and combine it with the rest of
-        # the data.
-        # Note that this follows the VCF spec, where GT is always the first
-        # item whenever it is present.
+        # Following the VCF spec, GT is always the first item whenever it is present.
         else:
             return ':'.join([gt] + [self._stringify(x) for x in sample.data[1:]])
 
