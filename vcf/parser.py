@@ -74,7 +74,7 @@ _Filter = collections.namedtuple('Filter', ['id', 'desc'])
 _Alt = collections.namedtuple('Alt', ['id', 'desc'])
 _Format = collections.namedtuple('Format', ['id', 'num', 'type', 'desc'])
 _SampleInfo = collections.namedtuple('SampleInfo', ['samples', 'gt_bases', 'gt_types', 'gt_phases'])
-
+_Contig = collections.namedtuple('Contig', ['id', 'length'])
 
 class _vcf_metadata_parser(object):
     '''Parse the metadat in the header of a VCF file.'''
@@ -296,6 +296,8 @@ class Reader(object):
         self.alts = None
         #: FORMAT fields from header
         self.formats = None
+        #: contig fields from header
+        self.contigs = None
         self.samples = None
         self._sample_indexes = None
         self._header_lines = []
@@ -326,7 +328,7 @@ class Reader(object):
 
         The end user shouldn't have to use this.  She can access the metainfo
         directly with ``self.metadata``.'''
-        for attr in ('metadata', 'infos', 'filters', 'alts', 'formats'):
+        for attr in ('metadata', 'infos', 'filters', 'alts', 'formats', 'contigs'):
             setattr(self, attr, OrderedDict())
 
         parser = _vcf_metadata_parser()
@@ -354,6 +356,7 @@ class Reader(object):
             elif line.startswith('##contig'):
                 key, val = parser.read_contig(line)
                 self.contigs[key] = val
+                print key
 
             else:
                 key, val = parser.read_meta(line)
