@@ -3,7 +3,6 @@ import collections
 import csv
 import gzip
 import itertools
-import os
 import re
 import sys
 
@@ -75,6 +74,7 @@ _Alt = collections.namedtuple('Alt', ['id', 'desc'])
 _Format = collections.namedtuple('Format', ['id', 'num', 'type', 'desc'])
 _SampleInfo = collections.namedtuple('SampleInfo', ['samples', 'gt_bases', 'gt_types', 'gt_phases'])
 _Contig = collections.namedtuple('Contig', ['id', 'length'])
+
 
 class _vcf_metadata_parser(object):
     '''Parse the metadat in the header of a VCF file.'''
@@ -240,7 +240,8 @@ class _vcf_metadata_parser(object):
 class Reader(object):
     """ Reader for a VCF v 4.0 file, an iterator returning ``_Record objects`` """
 
-    def __init__(self, fsock=None, filename=None, compressed=False, prepend_chr=False,
+    def __init__(self, header=None, lines=None, fsock=None, filename=None,
+                 compressed=False, prepend_chr=False,
                  strict_whitespace=False, pass_through=False):
         """ Create a new Reader for a VCF file.
 
@@ -259,8 +260,9 @@ class Reader(object):
         """
         super(Reader, self).__init__()
 
-        if not (fsock or filename):
-            raise Exception('You must provide at least fsock or filename')
+        if not (fsock or filename or (header and lines)):
+            raise Exception(
+                'You must provide at least fsock, filename or header/lines')
 
         if fsock:
             self._reader = fsock
@@ -271,6 +273,7 @@ class Reader(object):
             compressed = compressed or filename.endswith('.gz')
             self._reader = open(filename, 'rb' if compressed else 'rt')
         self.filename = filename
+
         if compressed:
             self._reader = gzip.GzipFile(fileobj=self._reader)
             if sys.version > '3':
@@ -281,8 +284,15 @@ class Reader(object):
         else:
             self._separator = '\t| +'
 
-        self.raw_reader = (line.strip() for line in self._reader
-                           if line.strip())
+        if (fsock or filename):
+            self.raw_reader = (line.strip() \
+                               for line in self._reader if line.strip())
+            self.header_reader = None
+        elif (header and lines):
+            self.raw_reader = (line.strip() \
+                               for line in lines if line.strip())
+            self.header_reader = (line.strip() \
+                                  for line in lines if line.strip())
 
         self.pass_through = pass_through
 
@@ -332,8 +342,11 @@ class Reader(object):
             setattr(self, attr, OrderedDict())
 
         parser = _vcf_metadata_parser()
+        if self.header_reader is not None:
+            line = self.header_reader.next()
+        else:
+            line = self.reader.next()
 
-        line = self.reader.next()
         while line.startswith('##'):
             self._header_lines.append(line)
 
@@ -356,7 +369,6 @@ class Reader(object):
             elif line.startswith('##contig'):
                 key, val = parser.read_contig(line)
                 self.contigs[key] = val
-                print key
 
             else:
                 key, val = parser.read_meta(line)
@@ -367,7 +379,10 @@ class Reader(object):
                         self.metadata[key] = []
                     self.metadata[key].append(val)
 
-            line = self.reader.next()
+            if self.header_reader is not None:
+                line = self.header_reader.next()
+            else:
+                line = self.reader.next()
 
         # process the header line if it is a header
         fields = re.split(self._separator, line[1:])
