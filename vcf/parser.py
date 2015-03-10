@@ -226,15 +226,15 @@ class _vcf_metadata_parser(object):
             # interpret anything else as key=none (and all values are parsed
             # as strings).
             return meta_string.lstrip('#'), 'none'
-            try:
-                key = match.group('key')
-                val = match.group('val')
-            except:
-                print "WARNING: invalid header line ({}) skipped". \
-                    format(meta_string)
-                key = None
-                val = None
-            return key, val
+        try:
+            key = match.group('key')
+            val = match.group('val')
+        except:
+            print "WARNING: invalid header line ({}) skipped". \
+                format(meta_string)
+            key = None
+            val = None
+        return key, val
 
 
 class Reader(object):
