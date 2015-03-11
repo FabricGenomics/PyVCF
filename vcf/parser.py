@@ -259,14 +259,15 @@ class Reader(object):
             strings
 
             'header' are all header lines of the VCF file and 'lines' are a bunch of
-            variant lines in VCF format
+            variant lines in VCF format. if only the header is provided,
+            the the parser runs in single line mode
 
         """
         super(Reader, self).__init__()
-
-        if not (fsock or filename or (header and lines)):
+        self.singleline = False
+        if not (fsock or filename or (header and lines) or header):
             raise Exception(
-                'You must provide at least fsock, filename or header/lines')
+                'You must provide at least fsock, filename or header/lines or just the header')
 
         if fsock:
             self._reader = fsock
@@ -296,7 +297,12 @@ class Reader(object):
             self.raw_reader = (line.strip() \
                                for line in lines if line.strip())
             self.header_reader = (line.strip() \
-                                  for line in lines if line.strip())
+                                  for line in header if line.strip())
+        elif (header and not lines and not fsock and not filename):
+            self.singleline = True
+            self.header_reader = (line.strip() \
+                                  for line in header if line.strip())
+
 
         self.pass_through = pass_through
 
@@ -594,9 +600,20 @@ class Reader(object):
         else:
             return _Substitution(str)
 
+
+    def parse_one_line(self, line):
+        if not self.singleline:
+            raise Exception('This method mus called in single line mode only')
+        self.one_line = line
+        return next(self)
+
     def next(self):
         '''Return the next record in the file.'''
-        line = self.reader.next()
+        if self.singleline:
+            line = self.one_line
+        else:
+            line = self.reader.next()
+
         while line.startswith('#'):
             line = self.reader.next()
         row = re.split(self._separator, line.rstrip())
