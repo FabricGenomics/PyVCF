@@ -257,6 +257,10 @@ class Reader(object):
             
             'pass_through=True' will allow params defined as ints to go through even if
             strings
+
+            'header' are all header lines of the VCF file and 'lines' are a bunch of
+            variant lines in VCF format
+
         """
         super(Reader, self).__init__()
 
