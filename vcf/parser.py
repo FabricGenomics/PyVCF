@@ -612,9 +612,9 @@ class Reader(object):
 
 
     def parse_one_line(self, line):
-        if not self.singleline:
+        if not hasattr(self, 'singleline') or not self.singleline:
             raise Exception('This method mus called in single line mode only')
-        if self.header_reader == None:
+        if  not hasattr(self, 'header_reader') or self.header_reader == None:
             raise Exception('There are no header information avaiable.')
 
         self.one_line = line
