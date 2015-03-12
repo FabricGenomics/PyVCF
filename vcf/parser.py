@@ -270,6 +270,8 @@ class Reader(object):
             raise Exception(
                 'You must provide at least fsock, filename or header/lines or set singleline')
 
+        self.header_reader = header
+        self.header_set = False
         if fsock:
             self._reader = fsock
             if filename is None and hasattr(fsock, 'name'):
@@ -331,12 +333,19 @@ class Reader(object):
         self._format_cache = {}
 
 
+    def set_header(self, header_lines=None):
+        if header_lines is not None:
+            self.header_reader = (line.strip() \
+                                  for line in header_lines if line.strip())
+        if self.header_reader is not None:
+            self._parse_metainfo()
+        else:
+            raise Exception('There are no header information avaiable.')
 
-    def set_header(self, header_lines):
-        self.header_reader = (line.strip() \
-                              for line in header_lines if line.strip())
-        self._parse_metainfo()
-
+    def _add_header_line(self, line):
+        if self.header_reader is None:
+            self.header_reader = []
+        self.header_reader.append(line.strip())
 
     @property
     def reader(self):
@@ -419,6 +428,7 @@ class Reader(object):
 
         self._sample_indexes = dict([(x,i) \
                 for (i,x) in enumerate(self.samples)])
+        self.header_set = True
 
     def _map(self, func, iterable, bad='.'):
         '''``map``, but make bad values None.'''
@@ -614,11 +624,21 @@ class Reader(object):
     def parse_one_line(self, line):
         if not hasattr(self, 'singleline') or not self.singleline:
             raise Exception('This method mus called in single line mode only')
-        if  not hasattr(self, 'header_reader') or self.header_reader == None:
+        if line[0] == '#' and not self.header_set:
+            self._add_header_line(line)
+        elif not line[0] == '#' and not self.header_set \
+                and not self.header_reader is None and len(
+                self.header_reader) > 0:
+            self.header_reader = (line.strip() \
+                                  for line in self.header_reader if
+                                  line.strip())
+            self.set_header(self.header_reader)
+        elif self.header_reader == None or not self.header_set:
             raise Exception('There are no header information avaiable.')
-
-        self.one_line = line
-        return next(self)
+        else:
+            self.one_line = line
+            return next(self)
+        return None
 
     def next(self):
         '''Return the next record in the file.'''
