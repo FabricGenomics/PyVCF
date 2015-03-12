@@ -240,7 +240,8 @@ class _vcf_metadata_parser(object):
 class Reader(object):
     """ Reader for a VCF v 4.0 file, an iterator returning ``_Record objects`` """
 
-    def __init__(self, header=None, lines=None, fsock=None, filename=None,
+    def __init__(self, header=None, lines=None, singleline=False,
+                 fsock=None, filename=None,
                  compressed=False, prepend_chr=False,
                  strict_whitespace=False, pass_through=False):
         """ Create a new Reader for a VCF file.
@@ -264,10 +265,10 @@ class Reader(object):
 
         """
         super(Reader, self).__init__()
-        self.singleline = False
-        if not (fsock or filename or (header and lines) or header):
+        self.singleline = singleline
+        if not (fsock or filename or (header and lines) or singleline):
             raise Exception(
-                'You must provide at least fsock, filename or header/lines or just the header')
+                'You must provide at least fsock, filename or header/lines or set singleline')
 
         if fsock:
             self._reader = fsock
@@ -298,10 +299,10 @@ class Reader(object):
                                for line in lines if line.strip())
             self.header_reader = (line.strip() \
                                   for line in header if line.strip())
-        elif (header and not lines and not fsock and not filename):
-            self.singleline = True
-            self.header_reader = (line.strip() \
-                                  for line in header if line.strip())
+        # elif (header and not lines and not fsock and not filename):
+        #     self.singleline = True
+        #     self.header_reader = (line.strip() \
+        #                           for line in header if line.strip())
 
 
         self.pass_through = pass_through
@@ -325,8 +326,17 @@ class Reader(object):
         self._tabix = None
         self._prepend_chr = prepend_chr
         self._previous_line = None
-        self._parse_metainfo()
+        if (self.singleline is False):
+           self._parse_metainfo()
         self._format_cache = {}
+
+
+
+    def set_header(self, header_lines):
+        self.header_reader = (line.strip() \
+                              for line in header_lines if line.strip())
+        self._parse_metainfo()
+
 
     @property
     def reader(self):
@@ -604,6 +614,9 @@ class Reader(object):
     def parse_one_line(self, line):
         if not self.singleline:
             raise Exception('This method mus called in single line mode only')
+        if self.header_reader == None:
+            raise Exception('There are no header information avaiable.')
+
         self.one_line = line
         return next(self)
 
