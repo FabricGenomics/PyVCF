@@ -299,10 +299,10 @@ class Reader(object):
                                for line in lines if line.strip())
             self.header_reader = (line.strip() \
                                   for line in header if line.strip())
-        # elif (header and not lines and not fsock and not filename):
-        #     self.singleline = True
-        #     self.header_reader = (line.strip() \
-        #                           for line in header if line.strip())
+        elif (header and self.singleline):
+            self.singleline = True
+            self.header_reader = (line.strip() \
+                                  for line in header if line.strip())
 
 
         self.pass_through = pass_through
