@@ -613,7 +613,7 @@ class Reader(object):
     def parse_one_line(self, line):
         if not hasattr(self, 'singleline') or not self.singleline:
             raise Exception('This method mus called in single line mode only')
-        if not hasattr(self, 'header_reader') or self.header_reader == None:
+        if not hasattr(self, 'header_reader') or self.header_reader is None:
             raise Exception('There are no header information avaiable.')
 
         self.one_line = line
@@ -845,7 +845,7 @@ class Writer(object):
         return "%s=%s" % (str(x), self._stringify(y, none=none, delim=delim))
 
     def _map(self, func, iterable, none='.'):
-        '''``map``, but make None values none.'''
+        """``map``, but make None values none."""
         return [func(x) if x is not None else none
                 for x in iterable]
 

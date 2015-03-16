@@ -23,7 +23,7 @@ class _Call(object):
         #: Dictionary of data from the VCF file
         self.data = data
 
-        if hasattr(self.data, 'GT'):
+        if hasattr(self.data, 'GT') and self.data.GT is not None:
             self.gt_alleles = [(al if al != '.' else None) for al in allele_delimiter.split(self.data.GT)]
             self.ploidity = len(self.gt_alleles)
             self.called = all([al != None for al in self.gt_alleles])
