@@ -244,6 +244,83 @@ def read_meta(meta_string):
     return key, val
 
 
+def map_bad(func, iterable, bad='.'):
+        """``map``, but make bad values None."""
+        return [func(x) if x != bad else None
+                for x in iterable]
+
+
+def map_none(func, iterable, none='.'):
+    """``map``, but make None values none."""
+    return [func(x) if x is not None else none
+            for x in iterable]
+
+
+def format_alt(alt):
+    return ','.join(map_none(str, alt))
+
+
+def stringify(x, none='.', delim=','):
+    if isinstance(x, list):
+        return delim.join(map_none(str, x, none))
+    return str(x) if x is not None else none
+
+
+def stringify_pair(x, y, none='.', delim=','):
+    if isinstance(y, bool):
+        return str(x) if y else ""
+    return "%s=%s" % (str(x), stringify(y, none=none, delim=delim))
+
+
+def format_sample(fmt, sample):
+    if hasattr(sample.data, 'GT'):
+        gt = sample.data.GT
+    else:
+        gt = './.' if 'GT' in fmt else ''
+
+    if not gt:
+        return ':'.join([stringify(x) for x in sample.data])
+    # Following the VCF spec, GT is always the first item whenever it is present.
+    else:
+        return ':'.join([gt] + [stringify(x) for x in sample.data[1:]])
+
+
+def format_filter(flt):
+    if not flt:
+        return 'PASS'
+    return stringify(flt, none='.', delim=';')
+
+
+def parse_alt(str_val):
+    if re.search('[\[\]]', str_val) is not None:
+        # Paired breakend
+        items = re.split('[\[\]]', str_val)
+        remoteCoords = items[1].split(':')
+        chr = remoteCoords[0]
+        if chr[0] == '<':
+            chr = chr[1:-1]
+            withinMainAssembly = False
+        else:
+            withinMainAssembly = True
+        pos = remoteCoords[1]
+        orientation = (str_val[0] == '[' or str_val[0] == ']')
+        remoteOrientation = (re.search('\[', str_val) is not None)
+        if orientation:
+            connectingSequence = items[2]
+        else:
+            connectingSequence = items[0]
+        return _Breakend(chr, pos, orientation, remoteOrientation,
+                         connectingSequence, withinMainAssembly)
+    elif str_val[0] == '.' and len(str_val) > 1:
+        return _SingleBreakend(True, str_val[1:])
+    elif str_val[-1] == '.' and len(str_val) > 1:
+        return _SingleBreakend(False, str_val[:-1])
+    elif str_val[0] == "<" and str_val[-1] == ">":
+        return _SV(str_val[1:-1])
+    else:
+        return _Substitution(str_val)
+
+
 class Reader(object):
     """Reader for a VCF v4.0 file, an iterator returning ``_Record objects``"""
 
@@ -263,7 +340,7 @@ class Reader(object):
             'strict_whitespace=True' will split records on tabs only (as with
             VCF spec) which allows you to parse files with spaces in the sample
             names.
-            
+
             'pass_through=True' will allow params defined as ints to go through
             even if strings
 
@@ -426,11 +503,6 @@ class Reader(object):
         self._sample_indexes = dict([(x, i)
                                     for (i, x) in enumerate(self.samples)])
 
-    def _map(self, func, iterable, bad='.'):
-        """``map``, but make bad values None."""
-        return [func(x) if x != bad else None
-                for x in iterable]
-
     def _parse_info(self, info_str):
         """Parse the INFO field of a VCF entry into a dictionary of Python
         types."""
@@ -458,27 +530,28 @@ class Reader(object):
             if entry_type == 'Integer':
                 vals = entry[1].split(',')
                 try:
-                    val = self._map(int, vals)
+                    val = map_bad(int, vals)
                 # Allow specified integers to be flexibly parsed as floats.
                 # Handles cases with incorrectly specified header types.
                 except ValueError:
                     try:
-                        val = self._map(float, vals)
+                        val = map_bad(float, vals)
                     except ValueError:
                         # JSI - added 06.27.13
                         if self.pass_through:
-                            val = self._map(str, vals)
+                            val = map_bad(str, vals)
                         else:
                             raise ValueError
             elif entry_type == 'Float':
                 vals = entry[1].split(',')
-                val = self._map(float, vals)
+                val = map_bad(float, vals)
             elif entry_type == 'Flag':
                 val = True
             elif entry_type in ('String', 'Character'):
                 try:
-                    vals = entry[1].split(',') # commas are reserved characters indicating multiple values
-                    val = self._map(str, vals)
+                    # commas are reserved characters indicating multiple values
+                    vals = entry[1].split(',')
+                    val = map_bad(str, vals)
                 except IndexError:
                     entry_type = 'Flag'
                     val = True
@@ -529,7 +602,6 @@ class Reader(object):
                 samp_fmt._nums, site)
 
         samp_data = []
-        _map = self._map
 
         nfields = len(samp_fmt._fields)
 
@@ -573,11 +645,11 @@ class Reader(object):
 
                 if entry_type == 'Integer':
                     try:
-                        sampdat[i] = _map(int, vals)
+                        sampdat[i] = map_bad(int, vals)
                     except ValueError:
-                        sampdat[i] = _map(float, vals)
+                        sampdat[i] = map_bad(float, vals)
                 elif entry_type == 'Float' or entry_type == 'Numeric':
-                    sampdat[i] = _map(float, vals)
+                    sampdat[i] = map_bad(float, vals)
                 else:
                     sampdat[i] = vals
 
@@ -586,35 +658,6 @@ class Reader(object):
             samp_data.append(call)
 
         return samp_data
-
-    def _parse_alt(self, str):
-        if re.search('[\[\]]', str) is not None:
-            # Paired breakend
-            items = re.split('[\[\]]', str)
-            remoteCoords = items[1].split(':')
-            chr = remoteCoords[0]
-            if chr[0] == '<':
-                chr = chr[1:-1]
-                withinMainAssembly = False
-            else:
-                withinMainAssembly = True
-            pos = remoteCoords[1]
-            orientation = (str[0] == '[' or str[0] == ']')
-            remoteOrientation = (re.search('\[', str) is not None)
-            if orientation:
-                connectingSequence = items[2]
-            else:
-                connectingSequence = items[0]
-            return _Breakend(chr, pos, orientation, remoteOrientation,
-                             connectingSequence, withinMainAssembly)
-        elif str[0] == '.' and len(str) > 1:
-            return _SingleBreakend(True, str[1:])
-        elif str[-1] == '.' and len(str) > 1:
-            return _SingleBreakend(False, str[:-1])
-        elif str[0] == "<" and str[-1] == ">":
-            return _SV(str[1:-1])
-        else:
-            return _Substitution(str)
 
     def parse_one_line(self, line):
         if not hasattr(self, 'singleline') or not self.singleline:
@@ -643,7 +686,7 @@ class Reader(object):
             ID = None
 
         ref = row[3]
-        alt = self._map(self._parse_alt, row[4].split(','))
+        alt = map_bad(parse_alt, row[4].split(','))
 
         try:
             qual = int(row[5])
@@ -777,16 +820,16 @@ class Writer(object):
 
     def write_record(self, record):
         """ write a record to the file """
-        ffs = self._map(str,
-                        [record.CHROM, record.POS, record.ID, record.REF]) + \
-            [self._format_alt(record.ALT), record.QUAL or '.',
-             self._format_filter(record.FILTER),
+        ffs = map_none(str,
+                       [record.CHROM, record.POS, record.ID, record.REF]) + \
+            [format_alt(record.ALT), record.QUAL or '.',
+             format_filter(record.FILTER),
              self._format_info(record.INFO)]
         if record.FORMAT:
             ffs.append(record.FORMAT)
 
-        samples = [self._format_sample(record.FORMAT, sample)
-            for sample in record.samples]
+        samples = [format_sample(record.FORMAT, sample)
+                   for sample in record.samples]
         self.writer.writerow(ffs + samples)
 
     def flush(self):
@@ -810,53 +853,20 @@ class Writer(object):
         else:
             return self.counts[num_str]
 
-    def _format_alt(self, alt):
-        return ','.join(self._map(str, alt))
-
-    def _format_filter(self, flt):
-        if flt == []:
-            return 'PASS'
-        return self._stringify(flt, none='.', delim=';')
-
     def _format_info(self, info):
         if not info:
             return '.'
+
         def order_key(field):
             # Order by header definition first, alphabetically second.
             return self.info_order[field], field
-        return ';'.join(self._stringify_pair(f, info[f]) for f in
+
+        return ';'.join(stringify_pair(f, info[f]) for f in
                         sorted(info, key=order_key))
-
-    def _format_sample(self, fmt, sample):
-        if hasattr(sample.data, 'GT'):
-            gt = sample.data.GT
-        else:
-            gt = './.' if 'GT' in fmt else ''
-
-        if not gt:
-            return ':'.join([self._stringify(x) for x in sample.data])
-        # Following the VCF spec, GT is always the first item whenever it is present.
-        else:
-            return ':'.join([gt] + [self._stringify(x) for x in sample.data[1:]])
-
-    def _stringify(self, x, none='.', delim=','):
-        if type(x) == type([]):
-            return delim.join(self._map(str, x, none))
-        return str(x) if x is not None else none
-
-    def _stringify_pair(self, x, y, none='.', delim=','):
-        if isinstance(y, bool):
-            return str(x) if y else ""
-        return "%s=%s" % (str(x), self._stringify(y, none=none, delim=delim))
-
-    def _map(self, func, iterable, none='.'):
-        """``map``, but make None values none."""
-        return [func(x) if x is not None else none
-                for x in iterable]
 
 
 def __update_readme():
-    import sys, vcf
+    import vcf
     file('README.rst', 'w').write(vcf.__doc__)
 
 
