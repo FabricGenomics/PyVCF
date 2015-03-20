@@ -68,19 +68,17 @@ field_counts = {
 }
 
 
-_Info = collections.namedtuple('Info', ['id', 'num', 'type', 'desc', 'source', 'version'])
+_Info = collections.namedtuple('Info', ['id', 'num', 'type', 'desc', 'source',
+                                        'version'])
 _Filter = collections.namedtuple('Filter', ['id', 'desc'])
 _Alt = collections.namedtuple('Alt', ['id', 'desc'])
 _Format = collections.namedtuple('Format', ['id', 'num', 'type', 'desc'])
-_SampleInfo = collections.namedtuple('SampleInfo', ['samples', 'gt_bases', 'gt_types', 'gt_phases'])
+_SampleInfo = collections.namedtuple('SampleInfo', ['samples', 'gt_bases',
+                                                    'gt_types', 'gt_phases'])
 _Contig = collections.namedtuple('Contig', ['id', 'length'])
 
 
-class _vcf_metadata_parser(object):
-    '''Parse the metadat in the header of a VCF file.'''
-    def __init__(self):
-        super(_vcf_metadata_parser, self).__init__()
-        self.info_pattern = re.compile(r'''\#\#INFO=<
+info_pattern = re.compile(r'''\#\#INFO=<
             ID=(?P<id>[^,]+),
             Number=(?P<number>-?\d+|\.|[AGR]),
             Type=(?P<type>Integer|Float|Flag|Character|String),
@@ -88,28 +86,29 @@ class _vcf_metadata_parser(object):
             (?:,Source="(?P<source>[^"]*)")?
             (?:,Version="?(?P<version>[^"]*)"?)?
             >''', re.VERBOSE)
-        self.filter_pattern = re.compile(r'''\#\#FILTER=<
+filter_pattern = re.compile(r'''\#\#FILTER=<
             ID=(?P<id>[^,]+),
             Description="(?P<desc>[^"]*)"
             >''', re.VERBOSE)
-        self.alt_pattern = re.compile(r'''\#\#ALT=<
+alt_pattern = re.compile(r'''\#\#ALT=<
             ID=(?P<id>[^,]+),
             Description="(?P<desc>[^"]*)"
             >''', re.VERBOSE)
-        self.format_pattern = re.compile(r'''\#\#FORMAT=<
+format_pattern = re.compile(r'''\#\#FORMAT=<
             ID=(?P<id>.+),
             Number=(?P<number>-?\d+|\.|[AGR]),
             Type=(?P<type>.+),
             Description="(?P<desc>.*)"
             >''', re.VERBOSE)
-        self.contig_pattern = re.compile(r'''\#\#contig=<
+contig_pattern = re.compile(r'''\#\#contig=<
             ID=(?P<id>[^>,]+)
             (,.*length=(?P<length>-?\d+))?
             .*
             >''', re.VERBOSE)
-        self.meta_pattern = re.compile(r'''##(?P<key>.+?)=(?P<val>.+)''')
+meta_pattern = re.compile(r'''##(?P<key>.+?)=(?P<val>.+)''')
 
-    def vcf_field_count(self, num_str):
+
+def vcf_field_count(num_str):
         """Cast vcf header numbers to integer or None"""
         if num_str is None:
             return None
@@ -119,68 +118,8 @@ class _vcf_metadata_parser(object):
         else:
             return field_counts[num_str]
 
-    def read_info(self, info_string):
-        '''Read a meta-information INFO line.'''
-        match = self.info_pattern.match(info_string)
-        if not match:
-            raise SyntaxError(
-                "One of the INFO lines is malformed: %s" % info_string)
 
-        num = self.vcf_field_count(match.group('number'))
-
-        info = _Info(match.group('id'), num,
-                     match.group('type'), match.group('desc'),
-                     match.group('source'), match.group('version'))
-
-        return (match.group('id'), info)
-
-    def read_filter(self, filter_string):
-        '''Read a meta-information FILTER line.'''
-        match = self.filter_pattern.match(filter_string)
-        if not match:
-            raise SyntaxError(
-                "One of the FILTER lines is malformed: %s" % filter_string)
-
-        filt = _Filter(match.group('id'), match.group('desc'))
-
-        return (match.group('id'), filt)
-
-    def read_alt(self, alt_string):
-        '''Read a meta-information ALTline.'''
-        match = self.alt_pattern.match(alt_string)
-        if not match:
-            raise SyntaxError(
-                "One of the FILTER lines is malformed: %s" % alt_string)
-
-        alt = _Alt(match.group('id'), match.group('desc'))
-
-        return (match.group('id'), alt)
-
-    def read_format(self, format_string):
-        '''Read a meta-information FORMAT line.'''
-        match = self.format_pattern.match(format_string)
-        if not match:
-            raise SyntaxError(
-                "One of the FORMAT lines is malformed: %s" % format_string)
-
-        num = self.vcf_field_count(match.group('number'))
-
-        form = _Format(match.group('id'), num,
-                       match.group('type'), match.group('desc'))
-
-        return (match.group('id'), form)
-
-    def read_contig(self, contig_string):
-        '''Read a meta-contigrmation INFO line.'''
-        match = self.contig_pattern.match(contig_string)
-        if not match:
-            raise SyntaxError(
-                "One of the contig lines is malformed: %s" % contig_string)
-        length = self.vcf_field_count(match.group('length'))
-        contig = _Contig(match.group('id'), length)
-        return (match.group('id'), contig)
-
-    def read_meta_hash(self, meta_string):
+def read_meta_hash(meta_string):
         items = re.split("[<>]", meta_string)
         # Removing initial hash marks and final equal sign
         key = items[0][2:-1]
@@ -217,28 +156,96 @@ class _vcf_metadata_parser(object):
             val[k] = v
         return key, val
 
-    def read_meta(self, meta_string):
-        if re.match("##.+=<", meta_string):
-            return self.read_meta_hash(meta_string)
-        match = self.meta_pattern.match(meta_string)
-        if not match:
-            # Spec only allows key=value, but we try to be liberal and
-            # interpret anything else as key=none (and all values are parsed
-            # as strings).
-            return meta_string.lstrip('#'), 'none'
-        try:
-            key = match.group('key')
-            val = match.group('val')
-        except:
-            print "WARNING: invalid header line ({}) skipped". \
-                format(meta_string)
-            key = None
-            val = None
-        return key, val
+
+def read_info(info_string):
+    """Read a meta-information INFO line."""
+    match = info_pattern.match(info_string)
+    if not match:
+        raise SyntaxError(
+            "One of the INFO lines is malformed: %s" % info_string)
+
+    num = vcf_field_count(match.group('number'))
+
+    info = _Info(match.group('id'), num,
+                 match.group('type'), match.group('desc'),
+                 match.group('source'), match.group('version'))
+
+    return match.group('id'), info
+
+
+def read_filter(filter_string):
+    """Read a meta-information FILTER line."""
+
+    match = filter_pattern.match(filter_string)
+    if not match:
+        raise SyntaxError(
+            "One of the FILTER lines is malformed: %s" % filter_string)
+
+    filt = _Filter(match.group('id'), match.group('desc'))
+
+    return match.group('id'), filt
+
+
+def read_alt(alt_string):
+    """Read a meta-information ALTline."""
+    match = alt_pattern.match(alt_string)
+    if not match:
+        raise SyntaxError(
+            "One of the FILTER lines is malformed: %s" % alt_string)
+
+    alt = _Alt(match.group('id'), match.group('desc'))
+
+    return match.group('id'), alt
+
+
+def read_format(format_string):
+    """Read a meta-information FORMAT line."""
+    match = format_pattern.match(format_string)
+    if not match:
+        raise SyntaxError(
+            "One of the FORMAT lines is malformed: %s" % format_string)
+
+    num = vcf_field_count(match.group('number'))
+
+    form = _Format(match.group('id'), num,
+                   match.group('type'), match.group('desc'))
+
+    return match.group('id'), form
+
+
+def read_contig(contig_string):
+    """Read a meta-contigrmation INFO line."""
+    match = contig_pattern.match(contig_string)
+    if not match:
+        raise SyntaxError(
+            "One of the contig lines is malformed: %s" % contig_string)
+    length = vcf_field_count(match.group('length'))
+    contig = _Contig(match.group('id'), length)
+    return match.group('id'), contig
+
+
+def read_meta(meta_string):
+    if re.match("##.+=<", meta_string):
+        return read_meta_hash(meta_string)
+    match = meta_pattern.match(meta_string)
+    if not match:
+        # Spec only allows key=value, but we try to be liberal and
+        # interpret anything else as key=none (and all values are parsed
+        # as strings).
+        return meta_string.lstrip('#'), 'none'
+    try:
+        key = match.group('key')
+        val = match.group('val')
+    except:
+        print "WARNING: invalid header line ({}) skipped". \
+            format(meta_string)
+        key = None
+        val = None
+    return key, val
 
 
 class Reader(object):
-    """ Reader for a VCF v 4.0 file, an iterator returning ``_Record objects`` """
+    """Reader for a VCF v4.0 file, an iterator returning ``_Record objects``"""
 
     def __init__(self, header=None, lines=None, singleline=False,
                  fsock=None, filename=None,
@@ -247,28 +254,30 @@ class Reader(object):
         """ Create a new Reader for a VCF file.
 
             You must specify either fsock (stream) or filename.  Gzipped streams
-            or files are attempted to be recogized by the file extension, or gzipped
-            can be forced with ``compressed=True``
+            or files are attempted to be recogized by the file extension, or
+            gzipped can be forced with ``compressed=True``
 
-            'prepend_chr=True' will put 'chr' before all the CHROM values, useful
-            for different sources.
+            'prepend_chr=True' will put 'chr' before all the CHROM values,
+            useful for different sources.
 
-            'strict_whitespace=True' will split records on tabs only (as with VCF
-            spec) which allows you to parse files with spaces in the sample names.
+            'strict_whitespace=True' will split records on tabs only (as with
+            VCF spec) which allows you to parse files with spaces in the sample
+            names.
             
-            'pass_through=True' will allow params defined as ints to go through even if
-            strings
+            'pass_through=True' will allow params defined as ints to go through
+            even if strings
 
-            'header' are all header lines of the VCF file and 'lines' are a bunch of
-            variant lines in VCF format. if only the header is provided,
-            the the parser runs in single line mode
+            'header' are all header lines of the VCF file and 'lines' are a
+            bunch of variant lines in VCF format. if only the header is
+            provided, the parser runs in single line mode
 
         """
         super(Reader, self).__init__()
         self.singleline = singleline
         if not (fsock or filename or (header and lines) or singleline):
             raise Exception(
-                'You must provide at least fsock, filename or header/lines or set singleline')
+                'You must provide at least fsock, filename or '
+                'header/lines or set singleline')
 
         if fsock:
             self._reader = fsock
@@ -290,20 +299,19 @@ class Reader(object):
         else:
             self._separator = '\t| +'
 
-        if (fsock or filename):
-            self.raw_reader = (line.strip() \
+        if fsock or filename:
+            self.raw_reader = (line.strip()
                                for line in self._reader if line.strip())
             self.header_reader = None
-        elif (header and lines):
-            self.raw_reader = (line.strip() \
+        elif header and lines:
+            self.raw_reader = (line.strip()
                                for line in lines if line.strip())
-            self.header_reader = (line.strip() \
+            self.header_reader = (line.strip()
                                   for line in header if line.strip())
-        elif (header and self.singleline):
+        elif header and self.singleline:
             self.singleline = True
-            self.header_reader = (line.strip() \
+            self.header_reader = (line.strip()
                                   for line in header if line.strip())
-
 
         self.pass_through = pass_through
 
@@ -326,16 +334,14 @@ class Reader(object):
         self._tabix = None
         self._prepend_chr = prepend_chr
         self._previous_line = None
-        if (self.singleline is False):
-           self._parse_metainfo()
+        if self.singleline is False:
+            self._parse_metainfo()
         self._format_cache = {}
 
-
     def set_header(self, header_lines):
-        self.header_reader = (line.strip() \
+        self.header_reader = (line.strip()
                               for line in header_lines if line.strip())
         self._parse_metainfo()
-
 
     @property
     def reader(self):
@@ -353,14 +359,15 @@ class Reader(object):
         return self
 
     def _parse_metainfo(self):
-        '''Parse the information stored in the metainfo of the VCF.
+        """Parse the information stored in the metainfo of the VCF.
 
         The end user shouldn't have to use this.  She can access the metainfo
-        directly with ``self.metadata``.'''
-        for attr in ('metadata', 'infos', 'filters', 'alts', 'formats', 'contigs'):
+        directly with ``self.metadata``."""
+
+        for attr in ('metadata', 'infos', 'filters', 'alts', 'formats',
+                     'contigs'):
             setattr(self, attr, OrderedDict())
 
-        parser = _vcf_metadata_parser()
         if self.header_reader is not None:
             line = self.header_reader.next()
         else:
@@ -370,27 +377,27 @@ class Reader(object):
             self._header_lines.append(line)
 
             if line.startswith('##INFO'):
-                key, val = parser.read_info(line)
+                key, val = read_info(line)
                 self.infos[key] = val
 
             elif line.startswith('##FILTER'):
-                key, val = parser.read_filter(line)
+                key, val = read_filter(line)
                 self.filters[key] = val
 
             elif line.startswith('##ALT'):
-                key, val = parser.read_alt(line)
+                key, val = read_alt(line)
                 self.alts[key] = val
 
             elif line.startswith('##FORMAT'):
-                key, val = parser.read_format(line)
+                key, val = read_format(line)
                 self.formats[key] = val
 
             elif line.startswith('##contig'):
-                key, val = parser.read_contig(line)
+                key, val = read_contig(line)
                 self.contigs[key] = val
 
             else:
-                key, val = parser.read_meta(line)
+                key, val = read_meta(line)
                 if key in SINGULAR_METADATA:
                     self.metadata[key] = val
                 else:
@@ -416,19 +423,18 @@ class Reader(object):
             self.samples = ['SAMPLE{0}'.format(i)
                             for i in range(1, len(fields[9:])+1)]
 
-        self._sample_indexes = dict([(x,i) \
-                for (i,x) in enumerate(self.samples)])
+        self._sample_indexes = dict([(x, i)
+                                    for (i, x) in enumerate(self.samples)])
 
     def _map(self, func, iterable, bad='.'):
-        '''``map``, but make bad values None.'''
+        """``map``, but make bad values None."""
         return [func(x) if x != bad else None
                 for x in iterable]
 
     def _parse_info(self, info_str):
-        '''Parse the INFO field of a VCF entry into a dictionary of Python
-        types.
+        """Parse the INFO field of a VCF entry into a dictionary of Python
+        types."""
 
-        '''
         if info_str == '.':
             return {}
 
@@ -478,7 +484,7 @@ class Reader(object):
                     val = True
 
             try:
-                if self.infos[ID].num == 1 and entry_type not in ( 'Flag', ):
+                if self.infos[ID].num == 1 and entry_type not in ('Flag', ):
                     val = val[0]
             except KeyError:
                 pass
@@ -506,12 +512,11 @@ class Reader(object):
         return samp_fmt
 
     def _parse_samples(self, samples, samp_fmt, site):
-        '''Parse a sample entry according to the format specified in the FORMAT
+        """Parse a sample entry according to the format specified in the FORMAT
         column.
 
         NOTE: this method has a cython equivalent and care must be taken
-        to keep the two methods equivalent
-        '''
+        to keep the two methods equivalent"""
 
         # check whether we already know how to parse this format
         if samp_fmt not in self._format_cache:
@@ -520,7 +525,8 @@ class Reader(object):
 
         if cparse:
             return cparse.parse_samples(
-                self.samples, samples, samp_fmt, samp_fmt._types, samp_fmt._nums, site)
+                self.samples, samples, samp_fmt, samp_fmt._types,
+                samp_fmt._nums, site)
 
         samp_data = []
         _map = self._map
@@ -599,7 +605,8 @@ class Reader(object):
                 connectingSequence = items[2]
             else:
                 connectingSequence = items[0]
-            return _Breakend(chr, pos, orientation, remoteOrientation, connectingSequence, withinMainAssembly)
+            return _Breakend(chr, pos, orientation, remoteOrientation,
+                             connectingSequence, withinMainAssembly)
         elif str[0] == '.' and len(str) > 1:
             return _SingleBreakend(True, str[1:])
         elif str[-1] == '.' and len(str) > 1:
@@ -609,25 +616,21 @@ class Reader(object):
         else:
             return _Substitution(str)
 
-
     def parse_one_line(self, line):
         if not hasattr(self, 'singleline') or not self.singleline:
-            raise Exception('This method mus called in single line mode only')
+            raise Exception('This method may called in single line mode only')
         if not hasattr(self, 'header_reader') or self.header_reader is None:
-            raise Exception('There are no header information avaiable.')
+            raise Exception('Header lines have not yet been supplied.')
 
-        self.one_line = line
-        return next(self)
+        return self.next(line)
 
-    def next(self):
-        '''Return the next record in the file.'''
-        if self.singleline:
-            line = self.one_line
-        else:
+    def next(self, line=None):
+        """Return the next record in the file."""
+        if not line:
             line = self.reader.next()
+            while line.startswith('#'):
+                line = self.reader.next()
 
-        while line.startswith('#'):
-            line = self.reader.next()
         row = re.split(self._separator, line.rstrip())
         chrom = row[0]
         if self._prepend_chr:
@@ -668,7 +671,7 @@ class Reader(object):
                 fmt = None
 
         record = _Record(chrom, pos, ID, ref, alt, qual, filt,
-                info, fmt, self._sample_indexes)
+                         info, fmt, self._sample_indexes)
 
         if fmt is not None:
             samples = self._parse_samples(row[9:], fmt, record)
@@ -723,7 +726,7 @@ class Writer(object):
     """VCF Writer. On Windows Python 2, open stream with 'wb'."""
 
     # Reverse keys and values in header field count dictionary
-    counts = dict((v,k) for k,v in field_counts.iteritems())
+    counts = dict((v, k) for k, v in field_counts.iteritems())
 
     def __init__(self, stream, template, lineterminator="\n"):
         self.writer = csv.writer(stream, delimiter="\t",
@@ -774,9 +777,11 @@ class Writer(object):
 
     def write_record(self, record):
         """ write a record to the file """
-        ffs = self._map(str, [record.CHROM, record.POS, record.ID, record.REF]) \
-              + [self._format_alt(record.ALT), record.QUAL or '.', self._format_filter(record.FILTER),
-                 self._format_info(record.INFO)]
+        ffs = self._map(str,
+                        [record.CHROM, record.POS, record.ID, record.REF]) + \
+            [self._format_alt(record.ALT), record.QUAL or '.',
+             self._format_filter(record.FILTER),
+             self._format_info(record.INFO)]
         if record.FORMAT:
             ffs.append(record.FORMAT)
 
