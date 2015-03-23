@@ -296,9 +296,9 @@ def parse_alt(str_val):
         # Paired breakend
         items = re.split('[\[\]]', str_val)
         remoteCoords = items[1].split(':')
-        chr = remoteCoords[0]
-        if chr[0] == '<':
-            chr = chr[1:-1]
+        chrom = remoteCoords[0]
+        if chrom[0] == '<':
+            chrom = chrom[1:-1]
             withinMainAssembly = False
         else:
             withinMainAssembly = True
@@ -309,7 +309,7 @@ def parse_alt(str_val):
             connectingSequence = items[2]
         else:
             connectingSequence = items[0]
-        return _Breakend(chr, pos, orientation, remoteOrientation,
+        return _Breakend(chrom, pos, orientation, remoteOrientation,
                          connectingSequence, withinMainAssembly)
     elif str_val[0] == '.' and len(str_val) > 1:
         return _SingleBreakend(True, str_val[1:])
