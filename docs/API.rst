@@ -43,14 +43,14 @@ vcf.model._SV
 .. autoclass:: vcf.model._SV
    :members:
 
-vcf.model._SingleBreakend
+vcf.model.SingleBreakend
 -----------
 
-.. autoclass:: vcf.model._SingleBreakend
+.. autoclass:: vcf.model.SingleBreakend
    :members:
 
-vcf.model._Breakend
+vcf.model.Breakend
 -----------
 
-.. autoclass:: vcf.parser._Breakend
+.. autoclass:: vcf.parser.Breakend
    :members:
